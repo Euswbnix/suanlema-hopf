@@ -14,14 +14,14 @@
     dθ/dt = ω = 2π / 5.05 s          （一轮「盘问—有—请出示—算了嘛」约 5 秒）
 
     μ = 司机嘴硬程度 − 警察强硬程度
-    原点 r = 0 是「出示驾照」。μ > 0 时它不稳定，所有轨迹被吸到半径 √μ 的
+    原点 r = 0 是「出示驾照」。μ > 0 时它是不稳定焦点（特征值 μ ± iω），所有轨迹被吸到半径 √μ 的
     极限环上，问多少遍都是同一个圈；郑重声明是一股强大的力量，把 μ 压到 −2，
-    极限环消失（Hopf 分岔），系统收敛到原点：拿出驾照。
+    极限环消失（Hopf 分岔），原点变成稳定焦点，系统收敛：拿出驾照。
 
 用法：
     python render.py                 # 渲染 media/suanlema_hopf.mp4
     python render.py --still 25      # 只导出第 25 秒的一帧，调版面用
-    python render.py --gif           # 渲染完再截结尾一段做 README 预览 GIF
+    python render.py --gif           # 渲染完再把整段视频转成 README 预览 GIF
 """
 import argparse
 import math
@@ -39,7 +39,7 @@ from matplotlib import font_manager
 from matplotlib.animation import FFMpegWriter
 from matplotlib.collections import LineCollection
 from matplotlib.colors import to_rgba
-from matplotlib.patches import FancyBboxPatch, Rectangle
+from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Rectangle
 
 ROOT = Path(__file__).resolve().parent
 
@@ -312,21 +312,21 @@ class Scene:
         ax.text(-R_VIEW + 0.05, R_VIEW - 0.05, "↑ y：司机心虚", color=MUTED, fontsize=15, ha="left", va="top")
 
         # 右栏：μ 读数
-        self.mu_txt = fig.text(0.545, 0.905, "", family="DejaVu Sans Mono", fontsize=34, color=TEXT, va="center")
-        self.state_txt = fig.text(0.69, 0.905, "", fontsize=26, va="center")
+        self.mu_txt = fig.text(0.545, 0.94, "", family="DejaVu Sans Mono", fontsize=34, color=TEXT, va="center")
+        self.state_txt = fig.text(0.69, 0.94, "", fontsize=26, va="center")
 
         # 右栏：台词框
-        box = FancyBboxPatch((0.545, 0.655), 0.42, 0.20, transform=fig.transFigure,
+        box = FancyBboxPatch((0.545, 0.735), 0.42, 0.165, transform=fig.transFigure,
                              boxstyle="round,pad=0,rounding_size=0.012", mutation_aspect=W_PX / H_PX,
                              facecolor=PANEL, edgecolor=GRID, lw=1.2)
         fig.patches.append(box)
-        self.who = fig.text(0.565, 0.815, "", fontsize=20, color=MUTED, va="center")
-        self.line = fig.text(0.565, 0.748, "", fontsize=40, color=TEXT, va="center")
-        self.stat = fig.text(0.565, 0.685, "", fontsize=18, color=SEC, va="center")
+        self.who = fig.text(0.565, 0.872, "", fontsize=20, color=MUTED, va="center")
+        self.line = fig.text(0.565, 0.815, "", fontsize=40, color=TEXT, va="center")
+        self.stat = fig.text(0.565, 0.76, "", fontsize=18, color=SEC, va="center")
 
         # 右栏：分岔图
-        fig.text(0.545, 0.625, "分岔图：μ 穿过 0，极限环消失，「出示驾照」变稳定", fontsize=18, color=SEC, va="center")
-        axb = fig.add_axes([0.565, 0.435, 0.39, 0.148])
+        fig.text(0.77, 0.695, "分岔图：极限环 ±√μ", fontsize=18, color=SEC, va="center")
+        axb = fig.add_axes([0.775, 0.455, 0.185, 0.205])
         axb.set_facecolor(BG)
         axb.set_axis_off()
         axb.set_xlim(-2.2, 1.5)
@@ -337,17 +337,65 @@ class Scene:
         m = np.linspace(0, 1.5, 200)
         for sgn in (1, -1):
             axb.plot(m, sgn * np.sqrt(m), color=CYCLE, lw=2.4)
-        axb.text(-1.1, 0.12, "出示驾照（稳定）", color=STABLE, fontsize=13, ha="center", va="bottom")
-        axb.text(1.5, 0.7, "极限环 ±√μ", color=CYCLE, fontsize=14, ha="right", va="top")
-        axb.text(0, -1.45, "μ = 0（Hopf 点）", color=MUTED, fontsize=13, ha="center", va="top")
+        axb.text(-1.1, 0.12, "稳定焦点", color=STABLE, fontsize=13, ha="center", va="bottom")
+        axb.text(1.0, -0.12, "不稳定焦点", color=UNSTABLE, fontsize=13, ha="center", va="top")
+        axb.text(1.5, 0.45, "极限环", color=CYCLE, fontsize=14, ha="right", va="top")
+        axb.text(0, -1.45, "Hopf 点", color=MUTED, fontsize=13, ha="center", va="top")
         self.bif_vline, = axb.plot([], [], color=SEC, lw=1, ls=(0, (2, 3)))
         self.bif_lab = axb.text(0, 1.4, "这位司机", color=DRIVER, fontsize=13, ha="center", va="bottom")
         self.bif_dot, = axb.plot([], [], "o", color=DRIVER, ms=10, zorder=5)
 
+        # 右栏：马尔可夫链。节点位置和相平面四段一一对应，「出示驾照」在正中间 = 原点
+        fig.text(0.545, 0.695, "状态转移（马尔可夫链）", fontsize=18, color=SEC, va="center")
+        axm = fig.add_axes([0.545, 0.43, 0.205, 0.245])
+        axm.set_facecolor(BG)
+        axm.set_axis_off()
+        yl = 1.45
+        xl = yl * (0.205 * W_PX) / (0.245 * H_PX)      # 让 x、y 单位等长，圆是圆的
+        axm.set_xlim(-xl, xl)
+        axm.set_ylim(-yl, yl)
+        nodes = [(0, 1.1), (-1.4, 0), (0, -1.1), (1.4, 0)]   # 盘问 / 有 / 请出示 / 算了嘛
+        owner = [POLICE, DRIVER, POLICE, DRIVER]
+        r_node, r_mid = 0.32, 0.38
+        self.mk_nodes = []
+        for (x, y), (lab, _, _), col in zip(nodes, SECTOR_LABELS, owner):
+            c = Circle((x, y), r_node, facecolor=BG, edgecolor=col, lw=2, zorder=3)
+            axm.add_patch(c)
+            self.mk_nodes.append((c, axm.text(x, y, lab, ha="center", va="center", fontsize=12,
+                                              color=TEXT, zorder=4), col))
+        self.mk_mid = Circle((0, 0), r_mid, facecolor=BG, edgecolor=UNSTABLE, lw=2, ls=(0, (3, 2)), zorder=3)
+        axm.add_patch(self.mk_mid)
+        self.mk_mid_t = axm.text(0, 0, "出示驾照", ha="center", va="center", fontsize=11, color=UNSTABLE, zorder=4)
+
+        def ends(a, b, ra, rb, gap=0.04):
+            d = math.hypot(b[0] - a[0], b[1] - a[1])
+            ux, uy = (b[0] - a[0]) / d, (b[1] - a[1]) / d
+            return ((a[0] + ux * (ra + gap), a[1] + uy * (ra + gap)),
+                    (b[0] - ux * (rb + gap), b[1] - uy * (rb + gap)))
+
+        self.mk_edges = []
+        for k in range(4):
+            a, b = nodes[k], nodes[(k + 1) % 4]
+            arr = FancyArrowPatch(*ends(a, b, r_node, r_node), arrowstyle="-|>", mutation_scale=14,
+                                  color=SEC, lw=1.6, shrinkA=0, shrinkB=0, zorder=2)
+            axm.add_patch(arr)
+            mx_, my_ = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+            nrm = math.hypot(mx_, my_)
+            lab = axm.text(mx_ + 0.3 * mx_ / nrm, my_ + 0.3 * my_ / nrm, "", ha="center", va="center",
+                           fontsize=12, color=SEC)
+            self.mk_edges.append((arr, lab))
+        self.mk_out = FancyArrowPatch(*ends(nodes[2], (0, 0), r_node, r_mid), arrowstyle="-|>", mutation_scale=14,
+                                      color=UNSTABLE, lw=1.6, ls=(0, (3, 2)), shrinkA=0, shrinkB=0, zorder=2)
+        axm.add_patch(self.mk_out)
+        self.mk_out_lab = axm.text(0.12, -0.47, "", ha="left", va="center", fontsize=10, color=UNSTABLE)
+        self.mk_info0 = axm.text(xl - 0.05, yl - 0.05, "周期 4", ha="right", va="top", fontsize=11, color=MUTED)
+        self.mk_info1 = axm.text(-xl + 0.05, yl - 0.05, "", ha="left", va="top", fontsize=11, color=MUTED)
+        self.mk_info2 = axm.text(xl - 0.05, -yl + 0.05, "", ha="right", va="bottom", fontsize=11, color=MUTED)
+
         # 右栏：出示概率 P(t)
-        fig.text(0.545, 0.37, "驾照出示概率 P(t)：每句话上一个台阶，「算了嘛」清零",
+        fig.text(0.545, 0.395, "驾照出示概率 P(t)：每句话上一个台阶，「算了嘛」清零",
                  fontsize=18, color=SEC, va="center")
-        axp = fig.add_axes([0.58, 0.11, 0.375, 0.225])
+        axp = fig.add_axes([0.58, 0.11, 0.375, 0.25])
         axp.set_facecolor(BG)
         axp.set_axis_off()
         axp.set_xlim(-20, 0)
@@ -416,9 +464,9 @@ class Scene:
             self.cycle_lab.set_visible(False)
 
         if mu > 0.02:
-            c, fill, lab, state, sc = UNSTABLE, "none", "出示驾照（不稳定）", "极限环：无限循环", CYCLE
+            c, fill, lab, state, sc = UNSTABLE, "none", "出示驾照（不稳定焦点）", "极限环：无限循环", CYCLE
         elif mu < -0.02:
-            c, fill, lab, state, sc = STABLE, STABLE, "出示驾照（稳定）", "稳定焦点：系统收敛", STABLE
+            c, fill, lab, state, sc = STABLE, STABLE, "出示驾照（稳定焦点）", "稳定焦点：系统收敛", STABLE
         else:
             c, fill, lab, state, sc = MUTED, "none", "出示驾照（临界）", "Hopf 分岔点", SEC
         self.fp.set_markeredgecolor(c)
@@ -504,6 +552,40 @@ class Scene:
 
         self.bif_dot.set_data([mu], [r])
 
+        # 马尔可夫链：请出示之后去哪，由 μ 决定；μ < 0 时出示驾照变成吸收态
+        p_out = smoothstep(-mu / 0.6)
+        for k, (arr, lab) in enumerate(self.mk_edges):
+            p = 1 - p_out if k == 2 else 1.0
+            lab.set_text(rf"$p={p:.2f}$")
+            arr.set_alpha(0.25 + 0.75 * p)
+            lab.set_alpha(0.4 + 0.6 * p)
+        absorbing = p_out >= 0.5
+        oc = STABLE if absorbing else UNSTABLE
+        ols = "-" if absorbing else (0, (3, 2))
+        self.mk_out.set_color(oc)
+        self.mk_out.set_linestyle(ols)
+        self.mk_out_lab.set_text(rf"$p={p_out:.2f}$")
+        self.mk_out_lab.set_color(oc)
+        self.mk_mid.set_edgecolor(oc)
+        self.mk_mid.set_linestyle(ols)
+        self.mk_mid.set_facecolor(STABLE if shown else BG)
+        self.mk_mid_t.set_color(BG if shown else oc)
+        active = sec if looping else (None if shown else 2)
+        for k, (c, t, col) in enumerate(self.mk_nodes):
+            on = k == active
+            c.set_facecolor(col if on else BG)
+            t.set_color(BG if on else TEXT)
+        if absorbing:
+            self.mk_info0.set_visible(False)
+            self.mk_info1.set_text("吸收概率 = 1")
+            self.mk_info2.set_text("出示驾照：吸收态")
+            self.mk_info2.set_color(STABLE)
+        else:
+            self.mk_info0.set_visible(True)
+            self.mk_info1.set_text("平稳分布各 1/4")
+            self.mk_info2.set_text("出示驾照：不可达")
+            self.mk_info2.set_color(MUTED)
+
         i0 = int(math.ceil(SIM_START * fps))
         if i >= i0:
             j = max(i0, i - 20 * fps)
@@ -545,7 +627,7 @@ class Scene:
             t.set_visible(ea > 0)
 
 
-def make_gif(mp4, gif, start, length, width=720, fps=15):
+def make_gif(mp4, gif, start, length, width=800, fps=12):
     vf = f"fps={fps},scale={width}:-1:flags=lanczos"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(start), "-t", str(length), "-i", str(mp4),
                     "-filter_complex", f"{vf},split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=bayer:bayer_scale=4",
@@ -557,7 +639,7 @@ def main():
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--out", type=Path, default=ROOT / "media" / "suanlema_hopf.mp4")
     ap.add_argument("--still", type=float, help="只导出这一秒的单帧 PNG")
-    ap.add_argument("--gif", action="store_true", help="渲染后额外输出 media/preview.gif")
+    ap.add_argument("--gif", action="store_true", help="渲染后额外输出整段视频的 media/preview.gif")
     args = ap.parse_args()
 
     setup_fonts()
@@ -593,7 +675,7 @@ def main():
 
     if args.gif:
         gif = args.out.parent / "preview.gif"
-        make_gif(args.out, gif, start=sim["t_stmt"] - 1.0, length=sim["t_show"] - sim["t_stmt"] + 2.5)
+        make_gif(args.out, gif, start=0, length=scene.duration)
         print(gif)
 
 
