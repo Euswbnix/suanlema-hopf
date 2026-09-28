@@ -2,17 +2,18 @@
 """
 算了嘛，警官 —— 用 Hopf 极限环解释驾照为什么永远拿不出来。
 
-对话只有四句，循环往复：
-    警察：你有没有驾照？   司机：有。
-    警察：拿出来。         司机：算了嘛，警官。
+视频里的对话（原文顺序）：
+    请出示驾照 → 算了嘛警官 → 你有没有驾照 → 有 → 有就请出示驾照 → 算了嘛警官
+    → 不是，你有没有驾照 → 有 → 有就出示驾照 → 算了嘛警官
+    → 有没有驾照 → 有 → 你出示驾照 → 算了嘛警官 → ……
 
 模型（Hopf 标准型，极坐标）：
     dr/dt = r (μ − r²)
-    dθ/dt = ω = 2π / 5.05 s          （一轮对话约 5 秒）
+    dθ/dt = ω = 2π / 5.05 s          （一轮「盘问—有—请出示—算了嘛」约 5 秒）
 
     μ = 司机嘴硬程度 − 警察强硬程度
     原点 r = 0 是「出示驾照」。μ > 0 时它不稳定，
-    所有轨迹都被吸到半径 √μ 的极限环上，四句台词无限循环。
+    所有轨迹都被吸到半径 √μ 的极限环上，对话无限循环。
 
 用法：
     python render.py                 # 渲染 media/suanlema_hopf.mp4
@@ -40,22 +41,46 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 ROOT = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------- 模型参数
-PERIOD = 5.05                 # 一轮「问—有—拿出来—算了嘛」的秒数
+PERIOD = 5.05                 # 一轮「盘问—有—请出示—算了嘛」的秒数
 OMEGA = 2 * math.pi / PERIOD
 MU = 0.8                      # 司机嘴硬程度 − 警察强硬程度，全程 > 0
 R_VIEW = 1.75                 # 相平面显示范围 ±R_VIEW
 R_FLOOR = 3e-3                # 数值噪声地板，免得点永远卡在原点
-EPS = 0.01                    # P(t) 里「离原点多近算快掏出来了」的尺度
+EPS = 0.03                    # 离原点多近，出示概率就被顶得多高
 SULE_R = 0.02                 # 只排除数值噪声；再小声的「算了嘛」也算
 
 SIM_START = 2.2               # 片头开始淡出时开始积分
-# 警察两次加大力度：最早时刻、推到的半径。都卡在进入「拿出来」那一段时出手
-KICKS = [(19.0, 0.12), (27.0, 0.05)]
+START_U = 0.55                # 主角从「请出示」这一段开始（视频第一句就是请出示驾照）
+# 警察两次加大力度：最早时刻、推到的半径。原文 14 句播完之后，卡在进入「请出示」时出手
+KICKS = [(20.5, 0.12), (30.0, 0.05)]
 KICK_LEN = 0.6                # 一次推的过程（秒）
 
-LINES = [("警察", "你有没有驾照？"), ("司机", "有。"),
-         ("警察", "拿出来。"), ("司机", "算了嘛，警官。")]
-SECTOR_LABELS = [("问", 0, 1.58), ("有", -1.58, 0), ("拿出来", 0, -1.58), ("算了嘛", 1.58, 0)]
+# 每一段对应的出示概率台阶：盘问 / 有 / 请出示 / 算了嘛
+LEVELS = [0.25, 0.55, 0.8, 0.0]
+
+# 原视频的 14 句；之后按第 3~14 句循环
+SCRIPT = [
+    ("警察", "请出示驾照。"),
+    ("司机", "算了嘛，警官。"),
+    ("警察", "你有没有驾照？"),
+    ("司机", "有。"),
+    ("警察", "有就请出示驾照。"),
+    ("司机", "算了嘛，警官。"),
+    ("警察", "不是，你有没有驾照？"),
+    ("司机", "有。"),
+    ("警察", "有就出示驾照。"),
+    ("司机", "算了嘛，警官。"),
+    ("警察", "有没有驾照？"),
+    ("司机", "有。"),
+    ("警察", "你出示驾照。"),
+    ("司机", "算了嘛，警官。"),
+]
+SECTOR_LABELS = [("盘问", 0, 1.58), ("有", -1.58, 0), ("请出示", 0, -1.58), ("算了嘛", 1.58, 0)]
+
+
+def script_line(i):
+    return SCRIPT[i] if i < len(SCRIPT) else SCRIPT[2 + (i - 2) % 12]
+
 
 # ---------------------------------------------------------------- 配色（深色）
 BG = "#1a1a19"
@@ -67,7 +92,8 @@ MUTED = "#898781"
 DRIVER = "#F0997B"            # 司机 / 主轨迹
 POLICE = "#85B7EB"            # 警察
 CYCLE = "#AFA9EC"             # 极限环
-UNSTABLE = "#F09595"          # 不稳定平衡点
+UNSTABLE = "#F09595"          # 不稳定平衡点「出示驾照」
+STABLE = "#5DCAA5"
 GHOST = "#B4B2A9"             # 其他司机
 
 W_PX, H_PX, DPI = 1920, 1080, 100
@@ -94,16 +120,9 @@ def rk4(p, h):
 
 
 def phase(x, y):
-    """把角度换成对话进度 u∈[0,1)：0 问 / .25 有 / .5 拿出来 / .75 算了嘛（逆时针）"""
+    """把角度换成对话进度 u∈[0,1)：0 盘问 / .25 有 / .5 请出示 / .75 算了嘛（逆时针）"""
     th = math.atan2(y, x)
     return ((th - math.pi / 4) % (2 * math.pi)) / (2 * math.pi)
-
-
-def bump(u):
-    """一圈里的掏驾照进度：一路往上爬，「算了嘛」出口瞬间清零"""
-    if u < 0.75:
-        return 0.03 + 0.82 * (u / 0.75) ** 1.6
-    return 0.03 + 0.82 * math.exp(-(u - 0.75) / 0.018)
 
 
 def smoothstep(u):
@@ -111,21 +130,31 @@ def smoothstep(u):
     return u * u * (3 - 2 * u)
 
 
+def staircase(u, w):
+    """出示概率：每句话上一个台阶，「算了嘛」直接清零；离原点越近（w→1）台阶被顶得越高"""
+    s = min(3, int(u * 4))
+
+    def level(k):
+        return 0.0 if k == 3 else LEVELS[k] + (1 - LEVELS[k]) * w
+
+    prev, cur = level((s - 1) % 4), level(s)
+    width = 0.02 if s == 3 else 0.04          # 清零比上台阶快
+    return prev + (cur - prev) * smoothstep((u - s / 4) / width)
+
+
 def simulate(fps, t_max, substeps=6):
-    starts = [(0.08, math.pi / 2)]                       # 主角：刚被拦下，离出示驾照只差一点
+    a0 = math.pi / 4 + 2 * math.pi * START_U
+    starts = [(0.08, a0)]                                 # 主角：刚被拦下，离出示驾照只差一点
     starts += [(r, 0.4 + 2.1 * i) for i, r in enumerate([0.02, 0.35, 0.7, 1.05, 1.45, 1.65])]
     p = np.array([[r * math.cos(a), r * math.sin(a)] for r, a in starts])
 
     n = int(round(t_max * fps))
-    out = {k: np.zeros(n) for k in ("P", "r")}
-    out["pos"] = np.zeros((n, len(p), 2))
-    out["sec"] = np.zeros(n, int)
-    out["sule"] = np.zeros(n, int)
-    out["kick"] = np.zeros(n, bool)
-    kick_starts = []
+    out = {"P": np.zeros(n), "r": np.zeros(n), "pos": np.zeros((n, len(p), 2)),
+           "sec": np.zeros(n, int), "line": np.zeros(n, int), "sule": np.zeros(n, int)}
+    kick_starts, sule_times = [], []
 
     h = 1 / fps / substeps
-    prev, count = -1, 0
+    prev, count, line = -1, 0, 0
     pending = list(KICKS)
     active = None                                         # (开始时刻, 起始半径, 目标半径)
     for i in range(n):
@@ -136,30 +165,32 @@ def simulate(fps, t_max, substeps=6):
                 p = rk4(p, h)
             if active:
                 ts, r0, r1 = active
-                x, y = p[0]
-                r_now = math.hypot(x, y)
-                target = r0 + (r1 - r0) * smoothstep((tv - ts) / KICK_LEN)
-                p[0] *= target / r_now
+                r_now = math.hypot(*p[0])
+                p[0] *= (r0 + (r1 - r0) * smoothstep((tv - ts) / KICK_LEN)) / r_now
                 if tv - ts >= KICK_LEN:
                     active = None
         x, y = p[0]
         r = math.hypot(x, y)
         u = phase(x, y)
         s = min(3, int(u * 4))
+        if prev != -1 and s != prev:
+            line += 1
+            if s == 3 and r > SULE_R:
+                count += 1
+                sule_times.append(tv)
+        assert s == (2 + line) % 4, "台词和相位对不上"
         if pending and tv >= pending[0][0] and prev == 1 and s == 2 and not active:
             active = (tv, r, pending.pop(0)[1])
             kick_starts.append(tv)
-        if prev == 2 and s == 3 and r > SULE_R:
-            count += 1
         prev = s
-        w = math.exp(-r * r / EPS)
         out["pos"][i] = p
         out["r"][i] = r
         out["sec"][i] = s
+        out["line"][i] = line
         out["sule"][i] = count
-        out["kick"][i] = active is not None
-        out["P"][i] = (1 - w) * bump(u) + w
+        out["P"][i] = staircase(u, math.exp(-r * r / EPS))
     out["kick_starts"] = kick_starts
+    out["sule_times"] = sule_times
     return out
 
 
@@ -195,7 +226,7 @@ class Scene:
         self.captions = [
             (3.0, 9.0, "μ > 0：原点「出示驾照」不稳定，差一点点也会被甩出去"),
             (9.0, 14.0, "不管从哪出发，所有司机最后都落到同一个圈上：极限环 r = √μ"),
-            (14.0, k1, "每一圈：有没有驾照？→ 有 → 拿出来 → 算了嘛，警官（约 5 秒一圈）"),
+            (14.0, k1, "每一圈：有没有驾照 → 有 → 请出示驾照 → 算了嘛警官（约 5 秒一圈）"),
             (k1, k1 + 3.0, "警察加大力度：一把推到离「出示驾照」很近的地方……"),
             (k1 + 3.0, k2, "……可原点不稳定，几圈就被甩回原来的循环"),
             (k2, k2 + 3.0, "再推一次，更近了——"),
@@ -214,7 +245,6 @@ class Scene:
         ax.set_ylim(-R_VIEW, R_VIEW)
         ax.set_aspect("equal")
         ax.set_axis_off()
-        self.ax = ax
 
         g = -1.625 + 0.25 * np.arange(14)
         gx, gy = np.meshgrid(g, g)
@@ -267,40 +297,46 @@ class Scene:
         self.stat = fig.text(0.565, 0.685, "", fontsize=18, color=SEC, va="center")
 
         # 右栏：分岔图
-        fig.text(0.545, 0.60, "分岔图：μ > 0 这一侧只有极限环是稳定的", fontsize=18, color=SEC, va="center")
-        axb = fig.add_axes([0.565, 0.355, 0.39, 0.215])
+        fig.text(0.545, 0.625, "分岔图：μ > 0 这一侧只有极限环是稳定的", fontsize=18, color=SEC, va="center")
+        axb = fig.add_axes([0.565, 0.435, 0.39, 0.16])
         axb.set_facecolor(BG)
         axb.set_axis_off()
         axb.set_xlim(-1, 1.5)
         axb.set_ylim(-1.4, 1.4)
         axb.plot([0, 0], [-1.4, 1.4], color=GRID, lw=1)
-        axb.plot([-1, 0], [0, 0], color="#5DCAA5", lw=2.4)
+        axb.plot([-1, 0], [0, 0], color=STABLE, lw=2.4)
         axb.plot([0, 1.5], [0, 0], color=UNSTABLE, lw=2.4, ls=(0, (4, 4)))
         m = np.linspace(0, 1.5, 200)
         for sgn in (1, -1):
             axb.plot(m, sgn * np.sqrt(m), color=CYCLE, lw=2.4)
         axb.plot([MU, MU], [-1.4, 1.4], color=SEC, lw=1, ls=(0, (2, 3)))
-        axb.text(-0.5, 0.1, "出示驾照（仅 μ<0 稳定）", color="#5DCAA5", fontsize=13, ha="center", va="bottom")
-        axb.text(1.5, 0.75, "极限环 ±√μ", color=CYCLE, fontsize=14, ha="right", va="top")
-        axb.text(0, -1.4, "μ = 0（Hopf 点）", color=MUTED, fontsize=13, ha="center", va="top")
+        axb.text(-0.5, 0.12, "出示驾照（仅 μ<0 稳定）", color=STABLE, fontsize=13, ha="center", va="bottom")
+        axb.text(1.5, 0.7, "极限环 ±√μ", color=CYCLE, fontsize=14, ha="right", va="top")
+        axb.text(0, -1.45, "μ = 0（Hopf 点）", color=MUTED, fontsize=13, ha="center", va="top")
         axb.text(MU, 1.4, "这位司机", color=DRIVER, fontsize=13, ha="center", va="bottom")
         self.bif_dot, = axb.plot([], [], "o", color=DRIVER, ms=10, zorder=5)
 
-        # 右栏：P(t)
-        fig.text(0.545, 0.29, "掏驾照进度 P(t)：「拿出来」时往上爬，一句「算了嘛」清零",
+        # 右栏：出示概率 P(t)
+        fig.text(0.545, 0.37, "驾照出示概率 P(t)：每句话上一个台阶，「算了嘛」清零",
                  fontsize=18, color=SEC, va="center")
-        axp = fig.add_axes([0.58, 0.11, 0.375, 0.155])
+        axp = fig.add_axes([0.58, 0.11, 0.375, 0.225])
         axp.set_facecolor(BG)
         axp.set_axis_off()
         axp.set_xlim(-20, 0)
-        axp.set_ylim(-0.05, 1.1)
-        for yv in (0, 0.5, 1):
+        axp.set_ylim(-0.05, 1.3)
+        for yv in (0, 0.5):
             axp.plot([-20, 0], [yv, yv], color=GRID, lw=1)
-        axp.text(-20.4, 1, "掏出", color=MUTED, fontsize=13, ha="right", va="center")
-        axp.text(-20.4, 0, "0", color=MUTED, fontsize=13, ha="right", va="center")
-        axp.text(-20, -0.12, "20 秒前", color=MUTED, fontsize=13, ha="left", va="top")
-        axp.text(0, -0.12, "现在", color=MUTED, fontsize=13, ha="right", va="top")
-        self.p_line, = axp.plot([], [], color=DRIVER, lw=2)
+        axp.plot([-20, 0], [1, 1], color=UNSTABLE, lw=1.4, ls=(0, (5, 4)))
+        axp.text(-19.8, 1.05, "出示驾照（从未到达）", color=UNSTABLE, fontsize=13, ha="left", va="bottom")
+        for yv, lab in ((1, "1.0"), (0.5, "0.5"), (0, "0.0")):
+            axp.text(-20.4, yv, lab, color=MUTED, fontsize=13, ha="right", va="center")
+        axp.text(-20, -0.1, "20 秒前", color=MUTED, fontsize=13, ha="left", va="top")
+        axp.text(0, -0.1, "现在", color=MUTED, fontsize=13, ha="right", va="top")
+        self.p_line, = axp.plot([], [], color=POLICE, lw=2.2)
+        self.p_head, = axp.plot([], [], "o", color=POLICE, ms=8)
+        self.sule_marks = [(axp.plot([], [], "v", color=DRIVER, ms=9)[0],
+                            axp.text(0, 1.07, "算了", color=DRIVER, fontsize=12, ha="center", va="bottom"))
+                           for _ in range(6)]
 
         self.caption = fig.text(0.5, 0.04, "", fontsize=24, color=TEXT, ha="center", va="center")
 
@@ -319,14 +355,14 @@ class Scene:
         ]
         self.end_txt = [
             ov.text(0.5, 0.66, "这个系统的吸引子是「算了嘛」，不是「出示驾照」", fontsize=42, color=TEXT, **kw),
-            ov.text(0.5, 0.53, "有没有驾照？→ 有 → 拿出来 → 算了嘛，警官 → 有没有驾照？→ …",
+            ov.text(0.5, 0.53, "有没有驾照 → 有 → 请出示驾照 → 算了嘛，警官 → 有没有驾照 → …",
                     fontsize=30, color=CYCLE, **kw),
             ov.text(0.5, 0.42, "推得再近也会被甩回去；要他掏出来，得让 μ < 0", fontsize=28, color=SEC, **kw),
             ov.text(0.5, 0.30, "μ = 司机嘴硬程度 − 警察强硬程度", fontsize=26, color=MUTED, **kw),
             ov.text(0.5, 0.10, r"$\dot r = r(\mu - r^2),\quad \dot\theta = 2\pi / 5.05\,\mathrm{s},\quad \mu = 0.8$",
                     fontsize=22, color=MUTED, **kw),
         ]
-        self.last_key = None
+        self.last_line = None
 
     # ---- 更新第 i 帧
     def update(self, i):
@@ -341,7 +377,8 @@ class Scene:
         pts = pos[j:i + 1, 0]
         segs = np.stack([pts[:-1], pts[1:]], axis=1) if len(pts) > 1 else np.zeros((0, 2, 2))
         col = np.tile(to_rgba(DRIVER), (len(segs), 1))
-        col[:, 3] = np.linspace(0, 0.95, len(segs)) if len(segs) else col[:, 3]
+        if len(segs):
+            col[:, 3] = np.linspace(0, 0.95, len(segs))
         self.main_lc.set_segments(segs)
         self.main_lc.set_color(col)
 
@@ -375,9 +412,9 @@ class Scene:
             t.set_color(DRIVER if on else MUTED)
             t.set_fontsize(25 if on else 22)
 
-        who, line = LINES[sec]
-        if (who, line) != self.last_key:
-            self.last_key = (who, line)
+        who, line = script_line(s["line"][i])
+        if (who, line) != self.last_line:
+            self.last_line = (who, line)
             self.who.set_text(who)
             self.who.set_color(POLICE if who == "警察" else DRIVER)
             self.line.set_text(line)
@@ -390,7 +427,8 @@ class Scene:
             self.line.set_fontsize(48 if pushing else 40)
             self.line.set_alpha(1.0)
             self.line.set_color(POLICE if pushing else TEXT)
-        self.stat.set_text(f"「算了嘛」× {s['sule'][i]}　　　出示驾照 × 0")
+        n = s["sule"][i]
+        self.stat.set_text(f"已完成 {max(0, n - 1)} 个周期 · 「算了嘛」× {n} · 驾照出示 0 次")
 
         self.bif_dot.set_data([MU], [r])
 
@@ -398,6 +436,20 @@ class Scene:
         if i >= i0:
             j = max(i0, i - 20 * fps)
             self.p_line.set_data((np.arange(j, i + 1) - i) / fps, s["P"][j:i + 1])
+            self.p_head.set_data([0], [s["P"][i]])
+        events = [te - tv for te in s["sule_times"] if tv - 20 < te <= tv]
+        for k, (mark, lab) in enumerate(self.sule_marks):
+            if k < len(events):
+                x = events[k]
+                a = ramp(x, -14.2, -13.2)       # 滑到左边「出示驾照（从未到达）」字样之前淡出
+                mark.set_data([x], [1.0])
+                mark.set_alpha(a)
+                lab.set_x(x)
+                lab.set_alpha(a)
+                lab.set_visible(a > 0)
+            else:
+                mark.set_data([], [])
+                lab.set_visible(False)
 
         text, alpha = "", 0.0
         for a, b, c in self.captions:
@@ -437,8 +489,9 @@ def main():
     scene = Scene(sim, args.fps)
     n = int(round(scene.duration * args.fps))
     k1, k2 = sim["kick_starts"]
-    print(f"时长 {scene.duration:.1f}s，{n} 帧；两次施压在 {k1:.2f}s / {k2:.2f}s，"
-          f"「算了嘛」共 {sim['sule'][n - 1]} 次")
+    script_end = next(t for t, c in zip(np.arange(n) / args.fps, sim["line"][:n]) if c >= len(SCRIPT))
+    print(f"时长 {scene.duration:.1f}s，{n} 帧；原文 14 句播完于 {script_end:.2f}s；"
+          f"两次施压在 {k1:.2f}s / {k2:.2f}s；「算了嘛」共 {sim['sule'][n - 1]} 次")
 
     if args.still is not None:
         i = min(n - 1, int(round(args.still * args.fps)))
